@@ -31,28 +31,113 @@ import { customFontsToLoad } from "./theme"
 import Config from "./config"
 import { KeyboardProvider } from "react-native-keyboard-controller"
 import { loadDateFnsLocale } from "./utils/formatDate"
+import { ParseJSONResultsPlugin } from "kysely"
+import { wrapPowerSyncWithKysely } from "@powersync/kysely-driver"
+import {
+  column,
+  PowerSyncBackendConnector,
+  PowerSyncContext,
+  PowerSyncDatabase,
+  Schema,
+  Table,
+  useQuery,
+} from "@powersync/react-native"
+import "@azure/core-asynciterator-polyfill"
+import Logger from "js-logger"
+import { Text } from "react-native"
 
-export const NAVIGATION_PERSISTENCE_KEY = "NAVIGATION_STATE"
+const randomJSON = JSON.stringify({
+  _id: "67cb119fd729ccda88e92f99",
+  index: 0,
+  guid: "c5fc7c6f-3ba2-436a-94fa-b8c2944bd322",
+  isActive: true,
+  balance: "$3,335.58",
+  picture: "http://placehold.it/32x32",
+  age: 25,
+  eyeColor: "green",
+  name: "Kay Bolton",
+  gender: "female",
+  company: "LIMOZEN",
+  email: "kaybolton@limozen.com",
+  phone: "+1 (885) 487-2790",
+  address: "450 Harden Street, Weogufka, New Mexico, 2984",
+  about:
+    "Labore occaecat eu excepteur nisi sint qui incididunt ut consectetur sunt laboris. Magna pariatur aute do fugiat ipsum. Nulla ut adipisicing eiusmod labore adipisicing esse in incididunt occaecat nisi non non.\r\n",
+  registered: "2022-05-09T08:09:23 -02:00",
+  latitude: -65.514283,
+  longitude: 114.597758,
+  tags: ["aliquip", "quis", "anim", "nostrud", "nulla", "deserunt", "laborum"],
+  friends: [
+    {
+      id: 0,
+      name: "Vargas Brady",
+    },
+    {
+      id: 1,
+      name: "Maria Lawrence",
+    },
+    {
+      id: 2,
+      name: "Lori Atkins",
+    },
+  ],
+  greeting: "Hello, Kay Bolton! You have 3 unread messages.",
+  favoriteFruit: "strawberry",
+})
 
-// Web linking configuration
-const prefix = Linking.createURL("/")
-const config = {
-  screens: {
-    Login: {
-      path: "",
-    },
-    Welcome: "welcome",
-    Demo: {
-      screens: {
-        DemoShowroom: {
-          path: "showroom/:queryIndex?/:itemIndex?",
-        },
-        DemoDebug: "debug",
-        DemoPodcastList: "podcast",
-        DemoCommunity: "community",
-      },
-    },
+const User = new Table({
+  type: column.text,
+  json: column.text,
+})
+
+const AppSchema = new Schema({
+  User,
+})
+
+const powersync = new PowerSyncDatabase({
+  schema: AppSchema,
+  database: {
+    // Filename for the SQLite database — it's important to only instantiate one instance per file.
+    dbFilename: "test.db",
+    debugMode: true,
+    // Optional. Directory where the database file is located.'
+    // dbLocation: 'path/to/directory'
   },
+  logger: Logger,
+})
+
+type Database = (typeof AppSchema)["types"]
+
+export const db = wrapPowerSyncWithKysely<Database>(powersync, {
+  plugins: [new ParseJSONResultsPlugin()],
+})
+
+class Connector implements PowerSyncBackendConnector {
+  async fetchCredentials() {
+    return null
+  }
+
+  async uploadData() {}
+}
+
+function GetUsers() {
+  const [userFilter, setUserFilter] = useState<string>()
+
+  const query = db.selectFrom("User").selectAll()
+
+  if (userFilter) {
+    query.where("id", "=", userFilter)
+  }
+
+  const { data } = useQuery(query)
+
+  console.log("xx", data.length)
+
+  useEffect(() => {
+    setUserFilter("500")
+  }, [])
+
+  return <Text>Data length: {data.length}</Text>
 }
 
 /**
@@ -61,53 +146,42 @@ const config = {
  * @returns {JSX.Element} The rendered `App` component.
  */
 export function App() {
-  const {
-    initialNavigationState,
-    onNavigationStateChange,
-    isRestored: isNavigationStateRestored,
-  } = useNavigationPersistence(storage, NAVIGATION_PERSISTENCE_KEY)
-
-  const [areFontsLoaded, fontLoadError] = useFonts(customFontsToLoad)
-  const [isI18nInitialized, setIsI18nInitialized] = useState(false)
+  const [isReady, setIsReady] = useState(false)
 
   useEffect(() => {
-    initI18n()
-      .then(() => setIsI18nInitialized(true))
-      .then(() => loadDateFnsLocale())
+    const setupDb = async () => {
+      console.log("setup db")
+
+      await powersync.connect(new Connector())
+      console.log("copnnected")
+      await powersync.init()
+      console.log("inited")
+      await powersync.execute('INSERT INTO "User" (id, type, json) VALUES ("1", "user", "xcdcs")')
+      console.log("inserted")
+      console.log(await powersync.getAll("User"))
+      await db
+        .insertInto("User")
+        .values(
+          Array.from({ length: 1 }, (_, i) => ({
+            id: String(i),
+            type: "user",
+            json: randomJSON,
+          }))[0],
+        )
+        .execute()
+      console.log("setup db finished")
+      setIsReady(true)
+    }
+
+    setTimeout(() => {
+      setupDb()
+    }, 2000)
   }, [])
 
-  useEffect(() => {
-    // If your initialization scripts run very fast, it's good to show the splash screen for just a bit longer to prevent flicker.
-    // Slightly delaying splash screen hiding for better UX; can be customized or removed as needed,
-    setTimeout(SplashScreen.hideAsync, 500)
-  }, [])
-
-  // Before we show the app, we have to wait for our state to be ready.
-  // In the meantime, don't render anything. This will be the background
-  // color set in native by rootView's background color.
-  // In iOS: application:didFinishLaunchingWithOptions:
-  // In Android: https://stackoverflow.com/a/45838109/204044
-  // You can replace with your own loading component if you wish.
-  if (!isNavigationStateRestored || !isI18nInitialized || (!areFontsLoaded && !fontLoadError)) {
-    return null
-  }
-
-  const linking = {
-    prefixes: [prefix],
-    config,
-  }
-
-  // otherwise, we're ready to render the app
   return (
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>
       <ErrorBoundary catchErrors={Config.catchErrors}>
-        <KeyboardProvider>
-          <AppNavigator
-            linking={linking}
-            initialState={initialNavigationState}
-            onStateChange={onNavigationStateChange}
-          />
-        </KeyboardProvider>
+        <KeyboardProvider>{isReady && <GetUsers />}</KeyboardProvider>
       </ErrorBoundary>
     </SafeAreaProvider>
   )
