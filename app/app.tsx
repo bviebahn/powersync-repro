@@ -16,36 +16,25 @@ if (__DEV__) {
   // If you turn it off in metro.config.js, you'll have to manually import it.
   require("./devtools/ReactotronConfig.ts")
 }
-import "./utils/gestureHandler"
-import { initI18n } from "./i18n"
-import "./utils/ignoreWarnings"
-import { useFonts } from "expo-font"
-import { useEffect, useState } from "react"
-import { initialWindowMetrics, SafeAreaProvider } from "react-native-safe-area-context"
-import * as Linking from "expo-linking"
-import * as SplashScreen from "expo-splash-screen"
-import { AppNavigator, useNavigationPersistence } from "./navigators"
-import { ErrorBoundary } from "./screens/ErrorScreen/ErrorBoundary"
-import * as storage from "./utils/storage"
-import { customFontsToLoad } from "./theme"
-import Config from "./config"
-import { KeyboardProvider } from "react-native-keyboard-controller"
-import { loadDateFnsLocale } from "./utils/formatDate"
-import { ParseJSONResultsPlugin } from "kysely"
+import "@azure/core-asynciterator-polyfill"
 import { wrapPowerSyncWithKysely } from "@powersync/kysely-driver"
 import {
   column,
-  PowerSyncBackendConnector,
   PowerSyncContext,
   PowerSyncDatabase,
   Schema,
   Table,
   useQuery,
 } from "@powersync/react-native"
-import "@azure/core-asynciterator-polyfill"
 import Logger from "js-logger"
+import { ParseJSONResultsPlugin } from "kysely"
+import { useEffect, useState } from "react"
 import { Text } from "react-native"
+import { initialWindowMetrics, SafeAreaProvider } from "react-native-safe-area-context"
+import "./utils/gestureHandler"
+import "./utils/ignoreWarnings"
 
+// just to increase the size of each row in the database, as I think this is relevant
 const randomJSON = JSON.stringify({
   _id: "67cb119fd729ccda88e92f99",
   index: 0,
@@ -112,29 +101,30 @@ export const db = wrapPowerSyncWithKysely<Database>(powersync, {
   plugins: [new ParseJSONResultsPlugin()],
 })
 
-class Connector implements PowerSyncBackendConnector {
-  async fetchCredentials() {
-    return null
-  }
-
-  async uploadData() {}
-}
-
 function GetUsers() {
   const [userFilter, setUserFilter] = useState<string>()
-
-  const query = db.selectFrom("User").selectAll()
+  let query = db.selectFrom("User").selectAll()
 
   if (userFilter) {
-    query.where("id", "=", userFilter)
+    query = query.where("id", "=", userFilter)
   }
 
   const { data } = useQuery(query)
 
-  console.log("xx", data.length)
+  // GetUsers result undefined 0
+  // GetUsers result 500 0
+  // GetUsers result 500 0
+  // GetUsers result 500 1
+  // GetUsers result 500 10000 <-- XXX
+  console.log("GetUsers result", userFilter, data.length)
 
   useEffect(() => {
     setUserFilter("500")
+
+    // does not happen if I delay this with a timeout
+    // setTimeout(() => {
+    //   setUserFilter("500")
+    // }, 1000)
   }, [])
 
   return <Text>Data length: {data.length}</Text>
@@ -150,39 +140,29 @@ export function App() {
 
   useEffect(() => {
     const setupDb = async () => {
-      console.log("setup db")
+      await db.deleteFrom("User").execute()
 
-      await powersync.connect(new Connector())
-      console.log("copnnected")
-      await powersync.init()
-      console.log("inited")
-      await powersync.execute('INSERT INTO "User" (id, type, json) VALUES ("1", "user", "xcdcs")')
-      console.log("inserted")
-      console.log(await powersync.getAll("User"))
       await db
         .insertInto("User")
         .values(
-          Array.from({ length: 1 }, (_, i) => ({
+          Array.from({ length: 10000 }, (_, i) => ({
             id: String(i),
             type: "user",
             json: randomJSON,
-          }))[0],
+          })),
         )
         .execute()
-      console.log("setup db finished")
       setIsReady(true)
     }
 
-    setTimeout(() => {
-      setupDb()
-    }, 2000)
+    setupDb()
   }, [])
 
   return (
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-      <ErrorBoundary catchErrors={Config.catchErrors}>
-        <KeyboardProvider>{isReady && <GetUsers />}</KeyboardProvider>
-      </ErrorBoundary>
+      <PowerSyncContext.Provider value={powersync}>
+        {isReady ? <GetUsers /> : undefined}
+      </PowerSyncContext.Provider>
     </SafeAreaProvider>
   )
 }
