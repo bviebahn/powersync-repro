@@ -13,7 +13,13 @@ config.transformer.getTransformOptions = async () => ({
     // However, this comes with some gotchas.
     // Read more here: https://reactnative.dev/docs/optimizing-javascript-loading
     // And here: https://github.com/expo/expo/issues/27279#issuecomment-1971610698
-    inlineRequires: true,
+    inlineRequires: {
+      blockList: {
+        [require.resolve("@powersync/react-native")]: true,
+        [require.resolve("@powersync/react")]: true,
+        [require.resolve("@powersync/common")]: true,
+      },
+    },
   },
 })
 
